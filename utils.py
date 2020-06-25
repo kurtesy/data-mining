@@ -1,6 +1,7 @@
 import json
 import time
 import pandas as pd
+from datetime import datetime
 
 logs = []
 
@@ -31,12 +32,17 @@ def load_org_data():
     df = pd.read_csv('all_companies.csv')
     return df
 
+
 def join_csv(files):
     dfs = []
     for file in files:
         dfs.append(pd.read_csv(file))
     final_df = pd.concat(dfs)
     write_data(final_df, 'company_data/company_list_joined.csv')
+
+
+def get_epoch():
+    return time.mktime(datetime.now().timetuple())
 
 
 def write_data(dataFrame, file_name, directory=None, append=False):

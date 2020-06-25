@@ -6,20 +6,18 @@ from Queue import Queue
 from threading import Thread
 from time import sleep
 from contextlib import closing
-from utils import performance_logger, write_data, read_company_domain_list, load_org_data
+from traceback import format_exc
+from utils import performance_logger, write_data, read_company_domain_list, load_org_data, get_epoch
 
 BASE_URL = 'https://api.apollo.io/v1/'
-KEY1 = 'W4NvoAW8V-TqJcStCanr9g'
-KEY2 = 'A2629-avgEoxHQ8UJv7uKg'
-API_KEY = KEY2  #'_liZuW6ZrPokGrHv-ZoOGg'
+the_url = 'https://app.apollo.io'
+SESSION = None
+API_KEY = None
 required_fields = ['id', 'name', 'industry', 'website_url', 'linkedin_url', 'facebook_url',
-                       'twitter_url', 'raw_address', 'short_description', 'estimated_num_employees',
-                       'annual_revenue']
+                   'twitter_url', 'raw_address', 'short_description', 'estimated_num_employees',
+                   'annual_revenue']
 people_fields = ['name', 'title', 'city', 'linkedin_url', 'email', 'organization_id']
 page_limit = 10
-rows = {}
-df = {}
-data = {}
 orgDataFrame = None
 orgRow = {}
 
@@ -52,31 +50,24 @@ class PeopleWorker(Thread):
                 self.queue.task_done()
 
 
-def swap_api_key():
-    global API_KEY
-    if API_KEY == KEY1:
-        API_KEY = KEY2
-    else:
-        API_KEY = KEY1
-
-
-def generate_api_key():
-    url = BASE_URL+'teams/generate_api_key'
 
 @performance_logger
 def get_company_data(company):
     params = {'domain': company, 'api_key': API_KEY}
-    response = requests.get(url=BASE_URL+'organizations/enrich', params=params)
-    if response.status_code == 401:
-        swap_api_key()
     try:
+        response = requests.get(url=BASE_URL + 'organizations/enrich', params=params)
+        if response.status_code == 401:
+            revoke_api_key()
+            generate_api_key()
         company_data = response.json()
         company_data = company_data['organization']
     except Exception as err:
-        print err
+        print err, format_exc()
         return {fields: '' for fields in required_fields}
-    result = {field: str(company_data[field]).rstrip().replace('"', '') if type(company_data[field]) == str else company_data[field]
-              for field in required_fields if field in company_data}
+    result = {
+        field: str(company_data[field]).rstrip().replace('"', '') if type(company_data[field]) == str else company_data[
+            field]
+        for field in required_fields if field in company_data}
     result.update({'domain': company})
     return result
 
@@ -113,11 +104,11 @@ def get_users_list():
 @performance_logger
 def get_companies_list(page_start=1):
     alphabetic_sampling = 'abcdefghijklmnopqrstuvwxyz'
-    rows[page_start] = []
+    rows = []
     url = BASE_URL + 'mixed_companies/search'
     retry = 0
     failed_pages = []
-    for page in range(page_start, page_start+page_limit):
+    for page in range(page_start, page_start + page_limit):
         if retry > 3:
             failed_pages.append(page)
             break
@@ -126,21 +117,22 @@ def get_companies_list(page_start=1):
             params = {'api_key': API_KEY, 'q_organization_name': 'a', 'page': page, 'per_page': 10}
             response = requests.post(url=url, params=params)
             if response.status_code == 401:
-                swap_api_key()
-            data[page_start] = response.json()
-            # print json.dumps(data)
-            for org in data[page_start]['organizations']:
+                revoke_api_key()
+                generate_api_key()
+            data = response.json()
+            print json.dumps(data), response
+            for org in data['organizations']:
                 domain = org['primary_domain']
                 if domain not in orgRow:
                     orgRow[domain] = get_company_data(domain)
-                rows[page_start].append({'id': org['id'], 'name': org['name'], 'domain': domain})
+                rows.append({'id': org['id'], 'name': org['name'], 'domain': domain})
             retry = 0
         except (ValueError, KeyError) as value_error:
             retry += 1
-            print 'Error', value_error
+            print 'Error', value_error, format_exc()
             continue
-    df[page_start] = pd.DataFrame(rows[page_start], columns=['id', 'name', 'domain'])
-    write_data(df[page_start], 'company_list_{}.csv'.format(page_start), directory='company_data')
+    df = pd.DataFrame(rows, columns=['id', 'name', 'domain'])
+    write_data(df, 'company_list_{}.csv'.format(page_start), directory='company_data')
     print 'Done'
 
 
@@ -149,7 +141,7 @@ def main_company():
     # Create a queue to communicate with the worker threads
     queue = Queue()
     # Create 2 worker threads
-    for thre in range(2):
+    for thre in range(1):
         worker = CompanyWorker(queue)
         worker.daemon = True
         worker.start()
@@ -169,7 +161,7 @@ def main_people():
     # Create a queue to communicate with the worker threads
     queue = Queue()
     # Create 2 worker threads
-    for thre in range(1):
+    for thre in range(2):
         worker = PeopleWorker(queue)
         worker.daemon = True
         worker.start()
@@ -178,7 +170,50 @@ def main_people():
     queue.join()
 
 
+def generate_api_key():
+    global API_KEY
+    url = BASE_URL + 'teams/generate_api_key'
+    params = {'version_sha': '75bc847f6f2dd59a06eb414362ad88cb17a18478',
+              'cacheKey': get_epoch()}
+    headers = {'referer': the_url, 'origin': the_url}
+    response = SESSION.post(url=url, params=params, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        print data
+        API_KEY = data['team']['api_key']
+
+
+def login():
+    url = BASE_URL + 'auth/login'
+    s = requests.Session()
+    params = {"email": "nishant210292@gmail.com",
+              "password": "R85PthE!!QjpCZ4",
+              "timezone_offset": -330,
+              "version_sha": "75bc847f6f2dd59a06eb414362ad88cb17a18478",
+              "cacheKey": 1592927776765}
+    headers = {'referer': the_url, 'origin': the_url,
+               }
+    response = s.post(url=url, params=params, headers=headers)
+    print response
+    print response.json()
+    return s
+
+
+def revoke_api_key():
+    url = BASE_URL + 'teams/revoke_api_key'
+    params = {'version_sha': '75bc847f6f2dd59a06eb414362ad88cb17a18478',
+              'cacheKey': get_epoch()}
+    headers = {'referer': the_url, 'origin': the_url}
+    response = SESSION.post(url=url, params=params, headers=headers)
+    print response
+    print response.json()
+
+
 if __name__ == '__main__':
+    if not SESSION:
+        SESSION = login()
+        revoke_api_key()
+        generate_api_key()
     # main_company()
     main_people()
     # get_peoples_data('54a11d5b69702d97c1b31201')
@@ -187,3 +222,5 @@ if __name__ == '__main__':
     # orgData = pd.DataFrame(columns=required_fields + ['domain'])
     # orgData = orgData.append(orgRow.values())
     # write_data(orgData, 'all_companies.csv', append=True)
+    # revoke_api_key()
+    # generate_api_key()
