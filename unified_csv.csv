@@ -1,7 +1,0 @@
-amount,date/timestamp,from,to,transaction_type
-99.1,Oct 1 2019,198,182,remove
-2000.1,Oct 2 2019,188,198,add
-99.99,03-10-2019,198,182,remove
-2123.99,04-10-2019,188,198,add
-5.44,5 Oct 2019,198,182,remove
-1060.44,6 Oct 2019,188,198,add
